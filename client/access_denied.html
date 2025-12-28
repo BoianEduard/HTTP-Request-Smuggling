@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Access Denied</title>
+    <style>
+        body { 
+            font-family: Arial, sans-serif; 
+            max-width: 500px; 
+            margin: 50px auto;
+            padding: 20px;
+            text-align: center;
+        }
+        .denied {
+            background: #fff3cd;
+            color: #856404;
+            padding: 30px;
+            border-radius: 5px;
+            margin: 20px 0;
+        }
+        .denied h2 {
+            margin-top: 0;
+            font-size: 48px;
+        }
+        a {
+            display: inline-block;
+            padding: 12px 30px;
+            background: #007bff;
+            color: white;
+            text-decoration: none;
+            border-radius: 5px;
+            margin-top: 20px;
+        }
+        a:hover { background: #0056b3; }
+    </style>
+</head>
+<body>
+    <div class="denied">
+        <h2>🔒</h2>
+        <h3>Access Denied</h3>
+        <p>You must be logged in to view this page.</p>
+        <p>Please authenticate to continue.</p>
+    </div>
+    <a href="/login">Go to Login</a>
+</body>
+</html>

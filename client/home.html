@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Vulnerable Web App</title>
+    <style>
+        body { 
+            font-family: Arial, sans-serif; 
+            max-width: 600px; 
+            margin: 50px auto;
+            padding: 20px;
+        }
+        h1 { color: #333; }
+        a { 
+            display: block; 
+            padding: 15px; 
+            margin: 10px 0; 
+            background: #007bff; 
+            color: white; 
+            text-decoration: none; 
+            text-align: center;
+            border-radius: 5px;
+        }
+        a:hover { background: #0056b3; }
+        .info {
+            color: #666;
+            font-size: 14px;
+            margin-top: 30px;
+            padding: 15px;
+            background: #f8f9fa;
+            border-left: 3px solid #007bff;
+        }
+    </style>
+</head>
+<body>
+    <h1>Welcome to Vulnerable Web App</h1>
+    <p>This application demonstrates HTTP Request Smuggling vulnerability.</p>
+    
+    <h3>Available Pages:</h3>
+    <a href="/login">🔐 Login</a>
+    <a href="/admin/dashboard">🔒 Admin Dashboard (Protected)</a>
+    
+    <div class="info">
+        <strong>Note:</strong> Admin dashboard requires authentication.<br>
+        Try logging in first!
+    </div>
+</body>
+</html>

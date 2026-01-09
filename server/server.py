@@ -1,73 +1,70 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, make_response
+import secrets
 import logging
-from datetime import datetime
+import sys
 
 app = Flask(__name__)
 
+# Enable logging
 logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - BACKEND - %(message)s'
+    level=logging.DEBUG,
+    format='%(asctime)s [%(levelname)s] %(message)s',
+    stream=sys.stdout
 )
+logger = logging.getLogger(__name__)
 
-request_log = []
+USERS = [
+    {'id': 1, 'username': 'alice', 'email': 'alice@company.com', 'password': 'alice123', 'role': 'user'},
+    {'id': 2, 'username': 'bob', 'email': 'bob@company.com', 'password': 'bob456', 'role': 'user'},
+    {'id': 3, 'username': 'admin', 'email': 'admin@company.com', 'password': 'admin_secret', 'role': 'admin'},
+]
 
-@app.route('/', methods=['GET','PUT','POST','DELETE'])
-@app.route('/<path:path>', methods=['GET','PUT','POST','DELETE'])
-def handle_request(path=''):
-    timestamp = datetime.now().isoformat()
-    request_info = {
-        'timestamp': timestamp,
-        'method': request.method,
-        'path': f'/{path}' if path else '/',
-        'headers': dict(request.headers),
-        'body': request.get_data(as_text=True),
-        'content-length': request.content_length,
-        'remote_addr': request.remote_addr
-    }
+SESSIONS = {}
 
-    request_log.append(request_info)
-    logging.info(f"{request.method} /{path}")
-    logging.info(f" Headers: {request_info['headers']}")
-    logging.info(f" Body length:  {len(request.get_data())}" )
-    logging.info(f" Content-Length header: {request.headers.get('Content-Length', 'Not Set')}")
-    logging.info("-" * 60)
+@app.before_request
+def log_request():
+    logger.info(f">>> REQUEST: {request.method} {request.path}")
+    logger.info(f">>> Headers: {dict(request.headers)}")
+    request.environ['wsgi.input_terminated'] = True
 
-    if path == 'admin':
-        return jsonify({
-            'status': 'success',
-            'message': 'ADMIN ACCESS - you have reached the admin panel!',
-            'timestamp': timestamp
-        }), 200
+@app.after_request
+def log_response(response):
+    logger.info(f"<<< RESPONSE: {response.status}")
+    return response
 
-    elif path == 'api/user':
-        return jsonify({
-            'status': 'success',
-            'user': 'victim_user',
-            'session': 'abcda12345sessiontoken',
-            'timestamp': timestamp
-        }), 200
+@app.route('/', methods=['GET', 'POST'])
+def home():
+    logger.info("HOME endpoint")
+    return 'Home Page'
+
+@app.route('/login', methods=['POST'])
+def login():
+    logger.info("LOGIN endpoint")
+    username = request.form.get('username')
+    password = request.form.get('password')
     
-    else:
-        return jsonify({
-            'status': 'success',
-            'message': f"Backend received {request.method} request to /{path}",
-            'timestamp': timestamp
-        }), 200
+    user = next((u for u in USERS if u['username'] == username and u['password'] == password), None)
     
-@app.route('/logs')
-def show_logs():
-    return jsonify({
-        'total_requests': len(request_log),
-        'requests': request_log[-10:]
-    })
+    if not user:
+        return 'Login failed', 401
+    
+    prefix = 'admin_' if user['role'] == 'admin' else 'user_'
+    token = prefix + secrets.token_hex(16)
+    SESSIONS[token] = user
+    
+    logger.info(f"LOGIN SUCCESS: {username} ({user['role']}) -> {token[:20]}...")
+    
+    resp = make_response(f'Login OK - {username}')
+    resp.set_cookie('session', token, httponly=True)
+    return resp
 
-@app.route('/clear') 
-def clear_logs():
-    request_log.clear()
-    return jsonify({
-        'status': 'success',
-        'message': 'Request logs cleared.'
-    }), 200
+@app.route('/users/admin', methods=['GET', 'POST'])
+def users_admin():
+    logger.info("Admin endpoint accessed ")
+    
+    rows = '<br>'.join([f"{u['id']} | {u['username']} | {u['email']} | <b>{u['password']}</b> | {u['role']}" for u in USERS])
+    
+    return f"<h1>ADMIN PANEL</h1><p>All users with passwords:</p>{rows}"
 
 if __name__ == '__main__':
-    app.run(host='127.0.0.1', port = 5000, debug=True)
+    app.run(port=5001, debug=True)

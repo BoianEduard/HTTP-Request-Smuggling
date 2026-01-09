@@ -1,0 +1,14 @@
+services:
+  proxy:
+    image: haproxy:2.2.16
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./server/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+    depends_on:
+      - backend
+
+  backend:
+    build: .
+    ports:
+      - "5001:5001"

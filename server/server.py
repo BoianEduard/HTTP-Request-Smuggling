@@ -1,52 +1,70 @@
-#!/usr/bin/env python3
-from flask import Flask, request, make_response, render_template
+from flask import Flask, request, make_response
+import secrets
 import logging
-import auth
+import sys
 
-app = Flask(__name__, template_folder='../client')
+app = Flask(__name__)
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - SERVER - %(message)s')
+# Enable logging
+logging.basicConfig(
+    level=logging.DEBUG,
+    format='%(asctime)s [%(levelname)s] %(message)s',
+    stream=sys.stdout
+)
+logger = logging.getLogger(__name__)
+
+USERS = [
+    {'id': 1, 'username': 'alice', 'email': 'alice@company.com', 'password': 'alice123', 'role': 'user'},
+    {'id': 2, 'username': 'bob', 'email': 'bob@company.com', 'password': 'bob456', 'role': 'user'},
+    {'id': 3, 'username': 'admin', 'email': 'admin@company.com', 'password': 'admin_secret', 'role': 'admin'},
+]
+
+SESSIONS = {}
+
+@app.before_request
+def log_request():
+    logger.info(f">>> REQUEST: {request.method} {request.path}")
+    logger.info(f">>> Headers: {dict(request.headers)}")
+    request.environ['wsgi.input_terminated'] = True
+
+@app.after_request
+def log_response(response):
+    logger.info(f"<<< RESPONSE: {response.status}")
+    return response
 
 @app.route('/', methods=['GET', 'POST'])
 def home():
-    logging.info(f"{request.method} /")
-    return render_template('home.html')
+    logger.info("HOME endpoint")
+    return 'Home Page'
 
-@app.route('/login', methods=['GET', 'POST'])
+@app.route('/login', methods=['POST'])
 def login():
-    if request.method == 'GET':
-        return render_template('login.html')
-    
+    logger.info("LOGIN endpoint")
     username = request.form.get('username')
     password = request.form.get('password')
-    user = auth.authenticate(username, password)
+    
+    user = next((u for u in USERS if u['username'] == username and u['password'] == password), None)
     
     if not user:
-        return render_template('login_failed.html'), 401
+        return 'Login failed', 401
     
-    session_token = auth.create_session(user['username'], user['role'])
-    logging.info(f"Login: {username} ({user['role']})")
+    prefix = 'admin_' if user['role'] == 'admin' else 'user_'
+    token = prefix + secrets.token_hex(16)
+    SESSIONS[token] = user
     
-    response = make_response(render_template('login_success.html', username=user['username']))
-    response.set_cookie('session', session_token, httponly=True)
-    return response
+    logger.info(f"LOGIN SUCCESS: {username} ({user['role']}) -> {token[:20]}...")
+    
+    resp = make_response(f'Login OK - {username}')
+    resp.set_cookie('session', token, httponly=True)
+    return resp
 
-@app.route('/users/list')
-def users_list():
-    session_token = request.cookies.get('session')
-    session = auth.validate_session(session_token)
-    
-    if not session:
-        return "Unauthorized", 401
-    
-    users = auth.get_users_safe()
-    return render_template('users_list.html', users=users, user_count=len(users))
-
-@app.route('/users/admin')
+@app.route('/users/admin', methods=['GET', 'POST'])
 def users_admin():
-    logging.warning("Backend trusts nginx - no role check")
-    users = auth.get_all_users()
-    return render_template('users_admin.html', users=users, user_count=len(users))
+    logger.info("Admin endpoint accessed ")
+    
+    rows = '<br>'.join([f"{u['id']} | {u['username']} | {u['email']} | <b>{u['password']}</b> | {u['role']}" for u in USERS])
+    
+    return f"<h1>ADMIN PANEL</h1><p>All users with passwords:</p>{rows}"
 
 if __name__ == '__main__':
-    app.run(host='127.0.0.1', port=5000, debug=True)
+    app.run(port=5001, debug=True)

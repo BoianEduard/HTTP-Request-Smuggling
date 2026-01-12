@@ -102,6 +102,89 @@ Host: 127.0.0.1:8080
 
 ## Proof of Concept
 
+
+### Test Environment Setup
+
+#### HAProxy Configuration (haproxy.cfg)
+
+The vulnerable HAProxy instance is configured with ACL rules to protect the admin endpoint:
+
+```properties
+...
+    # ACL to detect admin endpoint access
+    acl is_admin_endpoint path_beg /users/admin
+    
+    # ACL to check for admin session cookie
+    acl has_admin_session cook(session) -m beg admin_
+    
+    # Deny access to admin endpoint if user doesn't have admin session
+    http-request deny if is_admin_endpoint !has_admin_session
+...
+```
+
+**Key Points:**
+- **ACL Protection**: `/users/admin` is blocked unless session cookie starts with `admin_`
+- **HTTP Keep-Alive (Default)**: HAProxy uses keep-alive mode by default, reusing TCP connections to the backend - this is **critical for the attack** as it allows multiple requests on the same connection
+- **Session-Based Access Control**: Regular users (session starting with `user_`) are denied
+
+#### Backend Server (Flask)
+
+The backend server has three users and an admin endpoint:
+
+```python
+USERS = [
+    {'id': 1, 'username': 'alice', 'password': 'alice123', 'role': 'user'},
+    {'id': 2, 'username': 'bob', 'password': 'bob456', 'role': 'user'},
+    {'id': 3, 'username': 'admin', 'password': 'admin_secret', 'role': 'admin'},
+]
+
+@app.route('/login', methods=['POST'])
+def login():
+    # ... authentication logic ...
+    
+    # Generate session token with role prefix
+    prefix = 'admin_' if user['role'] == 'admin' else 'user_'
+    token = prefix + secrets.token_hex(16)
+    
+    resp.set_cookie('session', token, httponly=True)
+    return resp
+
+@app.route('/users/admin', methods=['GET', 'POST'])
+def users_admin():
+    # Returns sensitive data including all user passwords
+    rows = ''.join([
+        f"{u['id']} | {u['username']} | {u['email']} | "
+        f"{u['password']} | {u['role']}" 
+        for u in USERS
+    ])
+    
+    return f"ADMIN PANELAll users with passwords:{rows}"
+```
+
+**Security Model:**
+- Alice (regular user) gets session: `user_a1b2c3d4...`
+- Admin gets session: `admin_a1b2c3d4...`
+- HAProxy blocks alice's requests to `/users/admin`
+- **Backend Misconfiguration**: The Flask server blindly trusts that HAProxy has already enforced access control, and does **not re-validate** the session token or check if the user is actually an admin before serving sensitive data
+- **Vulnerability**: HTTP smuggling bypasses HAProxy's ACL check, and the backend has no defense-in-depth
+
+**Why This Works:**
+1. HAProxy sees the outer `POST /` request (allowed)
+2. HAProxy checks ACLs on `POST /` (no admin restriction)
+3. HAProxy forwards `content-length: 0` (due to overflow bug)
+4. Backend receives incomplete `GET /users/admin` request
+5. Second request completes it, bypassing HAProxy's ACL check
+6. **Backend blindly serves the admin endpoint** - it never checks if the session token is actually an admin token
+7. Backend processes `GET /users/admin` directly, revealing passwords
+
+**Defense-in-Depth Lesson:**
+This demonstrates why **backends should never blindly trust the proxy**. Even with HAProxy's ACLs in place, the backend should:
+- Parse and validate the session token itself
+- Check the user's role/permissions before serving sensitive endpoints
+- Implement its own authorization logic (e.g., `@require_admin` decorator)
+
+Relying solely on proxy-level access control creates a single point of failure.
+
 ### Key Exploit Sequences
 
 The PoC demonstrates bypassing HAProxy ACLs to access `/users/admin` using a regular user's session through four key steps:
